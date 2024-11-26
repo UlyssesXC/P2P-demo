@@ -1,48 +1,56 @@
 import socket
 import threading
 import os
-import signal
 from datetime import datetime
-import psutil  # 需要安装 psutil: pip install psutil
+import psutil  # For checking port usage (install with pip install psutil)
 
-# 服务器设置
-HOST = "0.0.0.0"  # 监听所有网络接口
-PORT = 53000       # 端口号
-LOG_FILE = "server_log.txt"
-server_socket = None  # 全局服务器套接字
+# Server configuration
+HOST = "0.0.0.0"          # Listen on all network interfaces
+PORT = 53000              # Port number
+LOG_DIR = "logs"          # Directory for storing log files
+FILES_DIR = "received_files"  # Directory for storing received files
+LOG_FILE = os.path.join(LOG_DIR, "server_log.txt")
+server_socket = None       # Global server socket
+
+# Ensure the directories exist
+os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(FILES_DIR, exist_ok=True)
 
 def log_activity(message):
-    """记录活动日志"""
-    print(message)  # 打印到控制台
+    """
+    Log activity to both the log file and the command line.
+    :param message: The message to log.
+    """
+    print(message)  # Print the message to the console
     with open(LOG_FILE, "a") as log:
         log.write(f"{datetime.now()} - {message}\n")
 
 def handle_client(client_socket, client_address):
-    """处理客户端连接"""
+    """
+    Handle a single client connection.
+    :param client_socket: The client socket.
+    :param client_address: The client's address.
+    """
     log_activity(f"Client connected: {client_address}")
     try:
-        # 接收文件名
-        log_activity(f"Waiting for file name from {client_address}...")
+        # Receive the file name
         file_name = client_socket.recv(1024).decode('utf-8')
-
         if not file_name:
             log_activity(f"No file name received from {client_address}. Closing connection.")
             return
 
         log_activity(f"Receiving file: {file_name} from {client_address}")
 
-        # 发送 ACK 确认
-        log_activity(f"Sending ACK to {client_address}")
+        # Send acknowledgment (ACK) to the client
         client_socket.send("ACK".encode('utf-8'))
 
-        # 接收文件数据
-        log_activity(f"Waiting for file data for: {file_name}")
-        with open(file_name, "wb") as f:
+        # Receive the file data and save it
+        file_path = os.path.join(FILES_DIR, file_name)
+        with open(file_path, "wb") as f:
             while True:
-                chunk = client_socket.recv(4096)
-                if not chunk:
+                chunk = client_socket.recv(4096)  # Read data in 4KB chunks
+                if not chunk:  # End of file transfer
                     break
-                log_activity(f"Received {len(chunk)} bytes")
                 f.write(chunk)
         log_activity(f"File {file_name} received successfully from {client_address}")
     except Exception as e:
@@ -52,18 +60,24 @@ def handle_client(client_socket, client_address):
         log_activity(f"Client disconnected: {client_address}")
 
 def check_port_usage(port):
-    """检查端口是否被占用"""
+    """
+    Check if a specific port is in use.
+    :param port: The port to check.
+    :return: (PID of the process using the port, address) or (None, None) if not in use.
+    """
     for conn in psutil.net_connections(kind="inet"):
         if conn.laddr.port == port:
             return conn.pid, conn.laddr
     return None, None
 
 def start_server():
-    """启动服务器"""
+    """
+    Start the server to listen for incoming connections.
+    """
     global server_socket
     log_activity("Initializing server...")
     
-    # 检查端口是否被占用
+    # Check if the port is already in use
     pid, addr = check_port_usage(PORT)
     if pid:
         log_activity(f"Port {PORT} is already in use by process PID {pid} (address: {addr}). Exiting.")
@@ -81,11 +95,12 @@ def start_server():
 
     try:
         while True:
+            # Accept new client connections
             log_activity("Waiting for a new connection...")
             client_socket, client_address = server_socket.accept()
             log_activity(f"Accepted connection from {client_address}")
 
-            # 为每个客户端启动一个线程
+            # Start a new thread to handle the client
             client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
             client_thread.start()
     except KeyboardInterrupt:
